@@ -78,7 +78,9 @@ make build
 
 ## Testing
 
-Unit tests do not require a live Ceph cluster.
+### Unit tests
+
+Unit tests use mocks and do not require a live Ceph cluster.
 
 **With Docker** (recommended — no local Ceph libraries needed):
 ```sh
@@ -96,6 +98,29 @@ To pass extra flags to `go test` (e.g. `-run TestOsdPool`):
 ```sh
 make docker-test TEST_ARGS="-run TestOsdPool"
 ```
+
+### Integration tests
+
+Integration tests run against a real single-node Ceph cluster bootstrapped with [micro-osd](https://github.com/ceph/go-ceph/blob/master/testing/containers/micro-osd.sh) inside Docker. They exercise the Ceph API layer directly (no Terraform state). No local Ceph installation is required.
+
+```sh
+make docker-integration-image   # build the image (includes full Ceph daemons)
+make docker-integration-test    # run integration and acceptance tests
+```
+
+The image is separate from the standard build image and only needs to be rebuilt when the Dockerfile or Ceph version changes.
+
+### Acceptance tests
+
+Acceptance tests (`//go:build acceptance`) run the full Terraform provider lifecycle — plan, apply, update, import, and destroy — against a real Ceph cluster. They are run automatically as part of `docker-integration-test`.
+
+To run acceptance tests manually against an existing cluster:
+
+```sh
+CEPH_CONF=/etc/ceph/ceph.conf TF_ACC=1 go test -v -count=1 -tags acceptance ./ceph/
+```
+
+The tests create and clean up all Ceph resources (pools, auth entities, filesystems) automatically.
 
 ## Regenerating Documentation
 

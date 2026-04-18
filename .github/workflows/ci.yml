@@ -44,3 +44,16 @@ jobs:
 
       - name: Build
         run: make build
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build integration test image
+        run: docker build --target=integration-test -t terraform-provider-ceph-integration .
+
+      - name: Run integration tests
+        run: docker run --rm --privileged terraform-provider-ceph-integration

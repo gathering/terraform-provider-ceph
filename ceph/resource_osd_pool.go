@@ -284,6 +284,9 @@ func resourceOSDPoolRead(ctx context.Context, d *schema.ResourceData, meta inter
 	if err := d.Set("crush_rule", pool.CrushRule); err != nil {
 		return diag.Errorf("Unable to set crush_rule: %s", err)
 	}
+	if err := d.Set("type", "replicated"); err != nil {
+		return diag.Errorf("Unable to set type: %s", err)
+	}
 
 	apps, err := osdPoolApplicationGet(conn, name)
 	if err != nil {

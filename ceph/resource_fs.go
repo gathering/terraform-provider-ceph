@@ -11,7 +11,7 @@ import (
 type fsListEntry struct {
 	Name         string   `json:"name"`
 	MetadataPool string   `json:"metadata_pool"`
-	DataPoolList []string `json:"data_pool_list"`
+	DataPools    []string `json:"data_pools"`
 }
 
 func fsGet(conn monCommander, name string) (*fsListEntry, error) {
@@ -40,10 +40,10 @@ func fsGet(conn monCommander, name string) (*fsListEntry, error) {
 
 func fsAddDataPool(conn monCommander, fsName, pool string) error {
 	command, err := json.Marshal(map[string]interface{}{
-		"prefix":   "fs add_data_pool",
-		"fs_name":  fsName,
-		"poolname": pool,
-		"format":   "json",
+		"prefix":  "fs add_data_pool",
+		"fs_name": fsName,
+		"pool":    pool,
+		"format":  "json",
 	})
 	if err != nil {
 		return err
@@ -54,10 +54,10 @@ func fsAddDataPool(conn monCommander, fsName, pool string) error {
 
 func fsRemoveDataPool(conn monCommander, fsName, pool string) error {
 	command, err := json.Marshal(map[string]interface{}{
-		"prefix":   "fs rm_data_pool",
-		"fs_name":  fsName,
-		"poolname": pool,
-		"format":   "json",
+		"prefix":  "fs rm_data_pool",
+		"fs_name": fsName,
+		"pool":    pool,
+		"format":  "json",
 	})
 	if err != nil {
 		return err
@@ -155,7 +155,7 @@ func resourceFSRead(ctx context.Context, d *schema.ResourceData, meta interface{
 	if err := d.Set("metadata_pool", fs.MetadataPool); err != nil {
 		return diag.Errorf("Unable to set metadata_pool: %s", err)
 	}
-	if err := d.Set("data_pools", fs.DataPoolList); err != nil {
+	if err := d.Set("data_pools", fs.DataPools); err != nil {
 		return diag.Errorf("Unable to set data_pools: %s", err)
 	}
 

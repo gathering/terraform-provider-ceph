@@ -9,8 +9,8 @@ import (
 
 func TestFsGet(t *testing.T) {
 	fsList := `[
-		{"name":"cephfs","metadata_pool":"cephfs_metadata","data_pool_list":["cephfs_data"]},
-		{"name":"other","metadata_pool":"other_metadata","data_pool_list":["other_data"]}
+		{"name":"cephfs","metadata_pool":"cephfs_metadata","data_pools":["cephfs_data"]},
+		{"name":"other","metadata_pool":"other_metadata","data_pools":["other_data"]}
 	]`
 
 	t.Run("found", func(t *testing.T) {
@@ -29,8 +29,8 @@ func TestFsGet(t *testing.T) {
 		if fs.MetadataPool != "cephfs_metadata" {
 			t.Errorf("MetadataPool = %q, want %q", fs.MetadataPool, "cephfs_metadata")
 		}
-		if len(fs.DataPoolList) != 1 || fs.DataPoolList[0] != "cephfs_data" {
-			t.Errorf("DataPoolList = %v, want [cephfs_data]", fs.DataPoolList)
+		if len(fs.DataPools) != 1 || fs.DataPools[0] != "cephfs_data" {
+			t.Errorf("DataPoolList = %v, want [cephfs_data]", fs.DataPools)
 		}
 		if mock.lastCmd["prefix"] != "fs ls" {
 			t.Errorf("prefix = %v, want %q", mock.lastCmd["prefix"], "fs ls")
@@ -82,8 +82,8 @@ func TestFsAddDataPool(t *testing.T) {
 	if mock.lastCmd["fs_name"] != "cephfs" {
 		t.Errorf("fs_name = %v, want %q", mock.lastCmd["fs_name"], "cephfs")
 	}
-	if mock.lastCmd["poolname"] != "extra_data" {
-		t.Errorf("poolname = %v, want %q", mock.lastCmd["poolname"], "extra_data")
+	if mock.lastCmd["pool"] != "extra_data" {
+		t.Errorf("pool = %v, want %q", mock.lastCmd["pool"], "extra_data")
 	}
 }
 
@@ -101,7 +101,7 @@ func TestFsRemoveDataPool(t *testing.T) {
 	if mock.lastCmd["fs_name"] != "cephfs" {
 		t.Errorf("fs_name = %v, want %q", mock.lastCmd["fs_name"], "cephfs")
 	}
-	if mock.lastCmd["poolname"] != "extra_data" {
-		t.Errorf("poolname = %v, want %q", mock.lastCmd["poolname"], "extra_data")
+	if mock.lastCmd["pool"] != "extra_data" {
+		t.Errorf("pool = %v, want %q", mock.lastCmd["pool"], "extra_data")
 	}
 }

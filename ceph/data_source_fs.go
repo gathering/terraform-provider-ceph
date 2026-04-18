@@ -53,7 +53,7 @@ func dataSourceFSRead(ctx context.Context, d *schema.ResourceData, meta interfac
 	if err := d.Set("metadata_pool", fs.MetadataPool); err != nil {
 		return diag.Errorf("Unable to set metadata_pool: %s", err)
 	}
-	if err := d.Set("data_pools", fs.DataPoolList); err != nil {
+	if err := d.Set("data_pools", fs.DataPools); err != nil {
 		return diag.Errorf("Unable to set data_pools: %s", err)
 	}
 
