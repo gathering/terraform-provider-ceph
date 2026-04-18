@@ -13,8 +13,8 @@ import (
 
 func resourceWaitOnline() *schema.Resource {
 	return &schema.Resource{
-		Description: "This dummy resource is waiting to Ceph to be online at creation time for up to 1 hour. " +
-			"This is useful for example on a boostrap procedure.",
+		Description: "This dummy resource is waiting for Ceph to be online at creation time for up to 1 hour. " +
+			"This is useful for example on a bootstrap procedure.",
 		CreateContext: resourceWaitOnlineCreate,
 		ReadContext:   resourceWaitOnlineRead,
 		DeleteContext: resourceWaitOnlineDummy,
@@ -32,7 +32,7 @@ func resourceWaitOnline() *schema.Resource {
 			"online": {
 				Type:        schema.TypeBool,
 				Computed:    true,
-				Description: "If the cluster is online, only checked at creationg time (always true)",
+				Description: "If the cluster is online, only checked at creation time (always true)",
 			},
 		},
 	}

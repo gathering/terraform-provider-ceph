@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"io/ioutil"
 	"os"
 
 	"github.com/ceph/go-ceph/rados"
@@ -56,15 +55,20 @@ func (config *Config) GetCephConnection() (*rados.Conn, error) {
 	}
 
 	if config.Keyring != "" {
-		keyringFile, err := ioutil.TempFile("", "terraform-provider-ceph")
+		keyringFile, err := os.CreateTemp("", "terraform-provider-ceph")
 		if err != nil {
 			return nil, err
 		}
 		defer os.Remove(keyringFile.Name())
 		if err = conn.SetConfigOption("keyring", keyringFile.Name()); err != nil {
+			keyringFile.Close()
 			return nil, err
 		}
 		if _, err = keyringFile.WriteString(config.Keyring); err != nil {
+			keyringFile.Close()
+			return nil, err
+		}
+		if err = keyringFile.Close(); err != nil {
 			return nil, err
 		}
 	}

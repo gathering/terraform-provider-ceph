@@ -17,7 +17,7 @@ type authResponse struct {
 
 func resourceAuth() *schema.Resource {
 	return &schema.Resource{
-		Description:   "This resource allows you to create a ceph client and retrieve his key and/or keyring.",
+		Description:   "This resource allows you to create a ceph client and retrieve its key and/or keyring.",
 		CreateContext: resourceAuthCreate,
 		ReadContext:   resourceAuthRead,
 		UpdateContext: resourceAuthUpdate,

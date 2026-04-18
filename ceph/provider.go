@@ -26,25 +26,31 @@ func Provider() *schema.Provider {
 			"keyring": {
 				Type:        schema.TypeString,
 				Optional:    true,
+				Sensitive:   true,
 				Description: "The actual keyring (not a path to a file) to use to connect to Ceph.",
 			},
 			"key": {
 				Type:        schema.TypeString,
 				Optional:    true,
+				Sensitive:   true,
 				Description: "The actual key (not a path to a file) to use to connect to Ceph.",
 			},
 			"mon_host": {
 				Type:        schema.TypeString,
 				Optional:    true,
-				Description: "List of mon to connect to Ceph.",
+				Description: "Monitor address(es) to connect to.",
 			},
 		},
 		DataSourcesMap: map[string]*schema.Resource{
-			"ceph_auth": dataSourceAuth(),
+			"ceph_auth":     dataSourceAuth(),
+			"ceph_osd_pool": dataSourceOSDPool(),
+			"ceph_fs":       dataSourceFS(),
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"ceph_wait_online": resourceWaitOnline(),
 			"ceph_auth":        resourceAuth(),
+			"ceph_osd_pool":    resourceOSDPool(),
+			"ceph_fs":          resourceFS(),
 		},
 		ConfigureFunc: providerConfigure,
 	}

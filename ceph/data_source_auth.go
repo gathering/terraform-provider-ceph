@@ -31,15 +31,16 @@ func dataSourceAuth() *schema.Resource {
 			},
 
 			"keyring": {
-				Type: schema.TypeString,
-
+				Type:        schema.TypeString,
 				Computed:    true,
+				Sensitive:   true,
 				Description: "The cephx keyring of the entity",
 			},
 
 			"key": {
 				Type:        schema.TypeString,
 				Computed:    true,
+				Sensitive:   true,
 				Description: "The cephx key of the entity",
 			},
 		},
