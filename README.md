@@ -24,6 +24,7 @@ This Terraform provider is used to manage Ceph. It was created at CERN and forke
 - [Terraform](https://www.terraform.io/downloads.html) >= v1.8
 - [Go](https://golang.org/doc/install) >= 1.25 (to build the provider)
 - `librados-dev` and `librbd-dev` (Ceph C libraries, required at build time)
+- [golangci-lint](https://golangci-lint.run/welcome/install/) (optional, for local linting — `brew install golangci-lint` on macOS)
 
 ## Usage
 

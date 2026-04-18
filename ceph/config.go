@@ -39,7 +39,7 @@ func (config *Config) GetCephConnection() (*rados.Conn, error) {
 			return nil, err
 		}
 	} else {
-		conn.ReadDefaultConfigFile() //nolint:golint,errcheck
+		conn.ReadDefaultConfigFile() //nolint:errcheck
 	}
 
 	if config.MonHost != "" {
@@ -59,13 +59,13 @@ func (config *Config) GetCephConnection() (*rados.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer os.Remove(keyringFile.Name())
+		defer os.Remove(keyringFile.Name()) //nolint:errcheck
 		if err = conn.SetConfigOption("keyring", keyringFile.Name()); err != nil {
-			keyringFile.Close()
+			_ = keyringFile.Close()
 			return nil, err
 		}
 		if _, err = keyringFile.WriteString(config.Keyring); err != nil {
-			keyringFile.Close()
+			_ = keyringFile.Close()
 			return nil, err
 		}
 		if err = keyringFile.Close(); err != nil {

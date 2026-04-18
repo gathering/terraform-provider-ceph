@@ -4,6 +4,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends libcephfs-dev librbd-dev librados-dev && \
     rm -rf /var/lib/apt/lists/*
 
+RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin
+
 WORKDIR /build
 
 # Download dependencies first so they are cached independently of source changes.

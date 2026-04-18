@@ -17,7 +17,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install librados-dev
+      - name: Install libcephfs-dev librbd-dev librados-dev
         run: |
           sudo apt-get update
           sudo apt-get install -y libcephfs-dev librbd-dev librados-dev

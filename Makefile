@@ -44,6 +44,13 @@ docker-fmt:
 	docker run --rm -v "$$(pwd):/build" -w /build $(DOCKER_IMAGE) \
 		gofmt -s -w $(GOFMT_FILES)
 
+lint:
+	golangci-lint run ./...
+
+docker-lint:
+	docker run --rm -v "$$(pwd):/build" -w /build $(DOCKER_IMAGE) \
+		golangci-lint run ./...
+
 docker-vet:
 	docker run --rm -v "$$(pwd):/build" -w /build $(DOCKER_IMAGE) \
 		go vet ./...
@@ -52,4 +59,4 @@ docker-generate:
 	docker run --rm -v "$$(pwd):/build" -w /build $(DOCKER_IMAGE) \
 		go generate ./...
 
-.PHONY: all build debug fmt test test-verbose docker-image docker-test docker-test-verbose docker-fmt docker-vet docker-generate
+.PHONY: all build debug fmt lint test test-verbose docker-image docker-test docker-test-verbose docker-fmt docker-lint docker-vet docker-generate

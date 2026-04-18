@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
@@ -42,19 +42,19 @@ func resourceWaitOnlineCreate(ctx context.Context, d *schema.ResourceData, meta 
 	config := meta.(*Config)
 	log.Printf("[DEBUG] Ceph starting ceph_wait_online")
 
-	err := resource.RetryContext(ctx, d.Timeout(schema.TimeoutCreate), func() *resource.RetryError {
+	err := retry.RetryContext(ctx, d.Timeout(schema.TimeoutCreate), func() *retry.RetryError {
 		_, err := config.GetCephConnection()
 		if err == nil {
 			log.Printf("[DEBUG] Ceph online on ceph_wait_online")
 			d.SetId(d.Get("cluster_name").(string))
 			if err := d.Set("online", true); err != nil {
-				return resource.NonRetryableError(fmt.Errorf("Unable to set online: %s", err))
+				return retry.NonRetryableError(fmt.Errorf("unable to set online: %s", err))
 			}
 			return nil
 		}
 
 		log.Printf("[DEBUG] Cannot connect to Ceph on ceph_wait_online: %s", err)
-		return resource.RetryableError(err)
+		return retry.RetryableError(err)
 	})
 
 	return diag.FromErr(err)
