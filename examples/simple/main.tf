@@ -1,8 +1,8 @@
 terraform {
-  required_version = ">= 0.14.0"
+  required_version = ">= 1.0.0"
   required_providers {
     ceph = {
-      source  = "cernops/ceph"
+      source  = "gathering/ceph"
       version = "~> 0.1.0"
     }
   }
@@ -13,24 +13,52 @@ provider "ceph" {
 }
 
 resource "ceph_wait_online" "wait" {
-    cluster_name = "my-super-cluster"
+  cluster_name = "my-super-cluster"
+}
+
+resource "ceph_osd_pool" "mypool" {
+  name        = "mypool"
+  pg_num      = 64
+  size        = 3
+  application = ["rbd"]
+
+  depends_on = [ceph_wait_online.wait]
+}
+
+resource "ceph_osd_pool" "cephfs_metadata" {
+  name        = "cephfs_metadata"
+  size        = 3
+  application = ["cephfs"]
+
+  depends_on = [ceph_wait_online.wait]
+}
+
+resource "ceph_osd_pool" "cephfs_data" {
+  name        = "cephfs_data"
+  size        = 3
+  application = ["cephfs"]
+
+  depends_on = [ceph_wait_online.wait]
+}
+
+resource "ceph_fs" "cephfs" {
+  name          = "cephfs"
+  metadata_pool = ceph_osd_pool.cephfs_metadata.name
+  data_pools    = [ceph_osd_pool.cephfs_data.name]
 }
 
 resource "ceph_auth" "test" {
-    entity = "client.test"
-    caps = {
-        "mon": "allow *",
-        "osd": "allow rw",
-        "mds": "allow rw"
-    }
-    depends_on = [
-        ceph_wait_online.test
-    ]
+  entity = "client.test"
+  caps = {
+    "mon" = "profile rbd"
+    "osd" = "profile rbd pool=mypool"
+  }
+
+  depends_on = [ceph_osd_pool.mypool]
 }
 
-data "ceph_auth" "test-data" {
-    entity = "client.test"
-    depends_on = [
-        ceph_auth.test
-    ]
+data "ceph_auth" "test_data" {
+  entity = "client.test"
+
+  depends_on = [ceph_auth.test]
 }

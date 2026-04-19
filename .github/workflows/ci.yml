@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install libcephfs-dev librbd-dev librados-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcephfs-dev librbd-dev librados-dev
+
+      - name: Check formatting
+        run: |
+          files=$(gofmt -l $(find . -name '*.go'))
+          if [ -n "$files" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+
+      - name: Run tests
+        run: make test-verbose
+
+      - name: Build
+        run: make build
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build integration test image
+        run: make docker-integration-image
+
+      - name: Run integration tests
+        run: make docker-integration-test
