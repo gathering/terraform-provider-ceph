@@ -1,6 +1,6 @@
 module github.com/gathering/terraform-provider-ceph
 
-go 1.25.0
+go 1.25.9
 
 require (
 	github.com/ceph/go-ceph v0.39.0
