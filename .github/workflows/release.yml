@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Allow goreleaser to access older tag information.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Ceph libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcephfs-dev librbd-dev librados-dev gcc-aarch64-linux-gnu
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v7
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          args: release --clean
+        env:
+          # GitHub sets the GITHUB_TOKEN secret automatically.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+          # arm64 cross-compilation via gcc-aarch64-linux-gnu
+          CC_linux_arm64: aarch64-linux-gnu-gcc
