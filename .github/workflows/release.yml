@@ -27,7 +27,7 @@ jobs:
       - name: Install Ceph libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcephfs-dev librbd-dev librados-dev gcc-aarch64-linux-gnu
+          sudo apt-get install -y libcephfs-dev librbd-dev librados-dev
 
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v7
