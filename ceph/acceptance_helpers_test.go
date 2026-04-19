@@ -7,13 +7,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )
 
-var testAccProviderFactories = map[string]func() (*schema.Provider, error){
-	"ceph": func() (*schema.Provider, error) {
-		return Provider(), nil
-	},
+var testAccProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
+	"ceph": providerserver.NewProtocol6WithError(New()()),
 }
 
 func testAccPreCheck(t *testing.T) {

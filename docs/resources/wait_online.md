@@ -15,10 +15,6 @@ This dummy resource is waiting for Ceph to be online at creation time for up to 
 ```terraform
 resource "ceph_wait_online" "wait" {
   cluster_name = "my-cluster"
-
-  timeouts {
-    create = "30m"
-  }
 }
 ```
 
@@ -29,18 +25,6 @@ resource "ceph_wait_online" "wait" {
 
 - `cluster_name` (String) That's a workaround to actually have an id, set this to something unique (i.e.: the cluster name).
 
-### Optional
-
-- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-
 ### Read-Only
 
-- `id` (String) The ID of this resource.
 - `online` (Boolean) If the cluster is online, only checked at creation time (always true)
-
-<a id="nestedblock--timeouts"></a>
-### Nested Schema for `timeouts`
-
-Optional:
-
-- `create` (String)

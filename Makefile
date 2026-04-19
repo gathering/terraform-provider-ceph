@@ -65,6 +65,6 @@ docker-integration-image:
 
 # Run integration tests against a real micro-osd Ceph cluster inside Docker
 docker-integration-test:
-	docker run --rm --privileged $(DOCKER_IMAGE)-integration
+	docker run --rm --privileged -v "$$(pwd):/build" -w /build $(DOCKER_IMAGE)-integration
 
 .PHONY: all build debug fmt lint test test-verbose docker-image docker-test docker-test-verbose docker-fmt docker-lint docker-vet docker-generate docker-integration-image docker-integration-test

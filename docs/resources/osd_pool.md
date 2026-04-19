@@ -36,7 +36,7 @@ resource "ceph_osd_pool" "scratch" {
 
 ### Optional
 
-- `application` (Set of String) Application tags enabled on the pool (e.g. rbd, cephfs, rgw). When rbd is included the pool is also initialized with rbd pool init.
+- `application` (List of String) Application tags enabled on the pool (e.g. rbd, cephfs, rgw). When rbd is included the pool is also initialized with rbd pool init.
 - `crush_rule` (String) CRUSH rule name for the pool. Uses the cluster default when not set.
 - `min_size` (Number) Minimum number of replicas required for I/O (replicated pools only). Uses the cluster default when not set.
 - `pg_num` (Number) Number of placement groups. Uses the cluster default when not set.
@@ -45,4 +45,4 @@ resource "ceph_osd_pool" "scratch" {
 
 ### Read-Only
 
-- `id` (String) The ID of this resource.
+- `id` (String) The pool name, used as the resource identifier.

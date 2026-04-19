@@ -2,60 +2,89 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func dataSourceFS() *schema.Resource {
-	return &schema.Resource{
-		Description: "This data source allows you to get information about an existing CephFS filesystem.",
-		ReadContext: dataSourceFSRead,
+var _ datasource.DataSource = &fsDataSource{}
+var _ datasource.DataSourceWithConfigure = &fsDataSource{}
 
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
+type fsDataSource struct {
+	config *Config
+}
+
+func newFSDataSource() datasource.DataSource {
+	return &fsDataSource{}
+}
+
+func (d *fsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_fs"
+}
+
+func (d *fsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	d.config = req.ProviderData.(*Config)
+}
+
+func (d *fsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "This data source allows you to get information about an existing CephFS filesystem.",
+		Attributes: map[string]schema.Attribute{
+			"name": schema.StringAttribute{
 				Required:    true,
 				Description: "The name of the filesystem.",
 			},
-			"metadata_pool": {
-				Type:        schema.TypeString,
+			"metadata_pool": schema.StringAttribute{
 				Computed:    true,
 				Description: "Pool used for filesystem metadata.",
 			},
-			"data_pools": {
-				Type:        schema.TypeSet,
+			"data_pools": schema.SetAttribute{
+				ElementType: types.StringType,
 				Computed:    true,
-				Elem:        &schema.Schema{Type: schema.TypeString},
 				Description: "Data pools attached to the filesystem.",
 			},
 		},
 	}
 }
 
-func dataSourceFSRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (d *fsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config fsDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	name := d.Get("name").(string)
 
+	conn, err := d.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
+
+	name := config.Name.ValueString()
 	fs, err := fsGet(conn, name)
 	if err != nil {
-		return diag.Errorf("Error data_source_fs reading filesystem %q: %s", name, err)
+		resp.Diagnostics.AddError(fmt.Sprintf("Error reading filesystem %q", name), err.Error())
+		return
 	}
 	if fs == nil {
-		return diag.Errorf("Filesystem %q not found", name)
+		resp.Diagnostics.AddError("Filesystem not found", fmt.Sprintf("Filesystem %q does not exist", name))
+		return
 	}
 
-	d.SetId(name)
-
-	if err := d.Set("metadata_pool", fs.MetadataPool); err != nil {
-		return diag.Errorf("Unable to set metadata_pool: %s", err)
-	}
-	if err := d.Set("data_pools", fs.DataPools); err != nil {
-		return diag.Errorf("Unable to set data_pools: %s", err)
+	dpSet, diags := types.SetValueFrom(ctx, types.StringType, fs.DataPools)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	return nil
+	resp.Diagnostics.Append(resp.State.Set(ctx, fsDataSourceModel{
+		Name:         types.StringValue(fs.Name),
+		MetadataPool: types.StringValue(fs.MetadataPool),
+		DataPools:    dpSet,
+	})...)
 }

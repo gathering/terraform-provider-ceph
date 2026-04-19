@@ -31,9 +31,8 @@ output "rbd_pg_num" {
 
 ### Read-Only
 
-- `application` (Set of String) Application tags enabled on the pool (e.g. rbd, cephfs, rgw).
+- `application` (List of String) Application tags enabled on the pool (e.g. rbd, cephfs, rgw).
 - `crush_rule` (String) CRUSH rule name for the pool.
-- `id` (String) The ID of this resource.
 - `min_size` (Number) Minimum number of replicas required for I/O.
 - `pg_num` (Number) Number of placement groups.
 - `size` (Number) Replication factor.

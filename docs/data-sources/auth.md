@@ -33,6 +33,5 @@ output "admin_key" {
 ### Read-Only
 
 - `caps` (Map of String) The caps of the entity
-- `id` (String) The ID of this resource.
 - `key` (String, Sensitive) The cephx key of the entity
 - `keyring` (String, Sensitive) The cephx keyring of the entity

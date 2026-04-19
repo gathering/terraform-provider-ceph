@@ -2,35 +2,50 @@ package ceph
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
-func resourceWaitOnline() *schema.Resource {
-	return &schema.Resource{
-		Description: "This dummy resource is waiting for Ceph to be online at creation time for up to 1 hour. " +
-			"This is useful for example on a bootstrap procedure.",
-		CreateContext: resourceWaitOnlineCreate,
-		ReadContext:   resourceWaitOnlineRead,
-		DeleteContext: resourceWaitOnlineDummy,
-		Timeouts: &schema.ResourceTimeout{
-			Create: schema.DefaultTimeout(time.Hour),
-		},
-		Schema: map[string]*schema.Schema{
-			"cluster_name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				ForceNew:    true,
-				Description: "That's a workaround to actually have an id, set this to something unique (i.e.: the cluster name).",
-			},
+var _ resource.Resource = &waitOnlineResource{}
+var _ resource.ResourceWithConfigure = &waitOnlineResource{}
 
-			"online": {
-				Type:        schema.TypeBool,
+type waitOnlineResource struct {
+	config *Config
+}
+
+func newWaitOnlineResource() resource.Resource {
+	return &waitOnlineResource{}
+}
+
+func (r *waitOnlineResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_wait_online"
+}
+
+func (r *waitOnlineResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	r.config = req.ProviderData.(*Config)
+}
+
+func (r *waitOnlineResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "This dummy resource is waiting for Ceph to be online at creation time for up to 1 hour. This is useful for example on a bootstrap procedure.",
+		Attributes: map[string]schema.Attribute{
+			"cluster_name": schema.StringAttribute{
+				Required:    true,
+				Description: "That's a workaround to actually have an id, set this to something unique (i.e.: the cluster name).",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"online": schema.BoolAttribute{
 				Computed:    true,
 				Description: "If the cluster is online, only checked at creation time (always true)",
 			},
@@ -38,35 +53,47 @@ func resourceWaitOnline() *schema.Resource {
 	}
 }
 
-func resourceWaitOnlineCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	config := meta.(*Config)
-	log.Printf("[DEBUG] Ceph starting ceph_wait_online")
-
-	err := retry.RetryContext(ctx, d.Timeout(schema.TimeoutCreate), func() *retry.RetryError {
-		_, err := config.GetCephConnection()
-		if err == nil {
-			log.Printf("[DEBUG] Ceph online on ceph_wait_online")
-			d.SetId(d.Get("cluster_name").(string))
-			if err := d.Set("online", true); err != nil {
-				return retry.NonRetryableError(fmt.Errorf("unable to set online: %s", err))
-			}
-			return nil
-		}
-
-		log.Printf("[DEBUG] Cannot connect to Ceph on ceph_wait_online: %s", err)
-		return retry.RetryableError(err)
-	})
-
-	return diag.FromErr(err)
-}
-
-func resourceWaitOnlineRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	if err := d.Set("cluster_name", d.Id()); err != nil {
-		return diag.Errorf("Unable to set cluster_name: %s", err)
+func (r *waitOnlineResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan waitOnlineModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	return nil
+
+	tflog.Debug(ctx, "starting ceph_wait_online")
+
+	ctx, cancel := context.WithTimeout(ctx, time.Hour)
+	defer cancel()
+
+	for {
+		_, err := r.config.GetCephConnection()
+		if err == nil {
+			tflog.Debug(ctx, "ceph_wait_online: cluster is online")
+			break
+		}
+		tflog.Debug(ctx, "ceph_wait_online: cluster not yet reachable", map[string]any{"error": err.Error()})
+		select {
+		case <-ctx.Done():
+			resp.Diagnostics.AddError("Timeout waiting for Ceph to come online", ctx.Err().Error())
+			return
+		case <-time.After(10 * time.Second):
+		}
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, waitOnlineModel{
+		ClusterName: plan.ClusterName,
+		Online:      types.BoolValue(true),
+	})...)
 }
 
-func resourceWaitOnlineDummy(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	return nil
+func (r *waitOnlineResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	// State is stable after creation; no live check on read.
+}
+
+func (r *waitOnlineResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+	// All attributes are RequiresReplace or Computed; Update is never called.
+}
+
+func (r *waitOnlineResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
+	// Nothing to delete — this resource has no Ceph-side representation.
 }

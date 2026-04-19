@@ -3,10 +3,70 @@ package ceph
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+var _ resource.Resource = &fsResource{}
+var _ resource.ResourceWithImportState = &fsResource{}
+var _ resource.ResourceWithConfigure = &fsResource{}
+
+type fsResource struct {
+	config *Config
+}
+
+func newFSResource() resource.Resource {
+	return &fsResource{}
+}
+
+func (r *fsResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_fs"
+}
+
+func (r *fsResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	r.config = req.ProviderData.(*Config)
+}
+
+func (r *fsResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "Manages a CephFS filesystem. The metadata and data pools must already exist before creating the filesystem.",
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:    true,
+				Description: "The filesystem name, used as the resource identifier.",
+			},
+			"name": schema.StringAttribute{
+				Required:    true,
+				Description: "The name of the filesystem.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"metadata_pool": schema.StringAttribute{
+				Required:    true,
+				Description: "Pool used for filesystem metadata. Changing this forces recreation of the filesystem.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"data_pools": schema.SetAttribute{
+				ElementType: types.StringType,
+				Required:    true,
+				Description: "Data pools for the filesystem. At least one is required.",
+			},
+		},
+	}
+}
 
 type fsListEntry struct {
 	Name         string   `json:"name"`
@@ -66,135 +126,182 @@ func fsRemoveDataPool(conn monCommander, fsName, pool string) error {
 	return err
 }
 
-func resourceFS() *schema.Resource {
-	return &schema.Resource{
-		Description:   "Manages a CephFS filesystem. The metadata and data pools must already exist before creating the filesystem.",
-		CreateContext: resourceFSCreate,
-		ReadContext:   resourceFSRead,
-		UpdateContext: resourceFSUpdate,
-		DeleteContext: resourceFSDelete,
-		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
-		},
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				ForceNew:    true,
-				Description: "The name of the filesystem.",
-			},
-			"metadata_pool": {
-				Type:        schema.TypeString,
-				Required:    true,
-				ForceNew:    true,
-				Description: "Pool used for filesystem metadata. Changing this forces recreation of the filesystem.",
-			},
-			"data_pools": {
-				Type:        schema.TypeSet,
-				Required:    true,
-				MinItems:    1,
-				Elem:        &schema.Schema{Type: schema.TypeString},
-				Description: "Data pools for the filesystem. At least one is required.",
-			},
-		},
+func (r *fsResource) fetchFromCeph(ctx context.Context, name string) (fsModel, bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	conn, err := r.config.GetCephConnection()
+	if err != nil {
+		diags.AddError("Unable to connect to Ceph", err.Error())
+		return fsModel{}, false, diags
 	}
+
+	fs, err := fsGet(conn, name)
+	if err != nil {
+		diags.AddError(fmt.Sprintf("Error reading filesystem %q", name), err.Error())
+		return fsModel{}, false, diags
+	}
+	if fs == nil {
+		return fsModel{}, false, diags
+	}
+
+	dpSet, d := types.SetValueFrom(ctx, types.StringType, fs.DataPools)
+	diags.Append(d...)
+	if diags.HasError() {
+		return fsModel{}, false, diags
+	}
+
+	return fsModel{
+		ID:           types.StringValue(fs.Name),
+		Name:         types.StringValue(fs.Name),
+		MetadataPool: types.StringValue(fs.MetadataPool),
+		DataPools:    dpSet,
+	}, true, diags
 }
 
-func resourceFSCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (r *fsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan fsModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	name := d.Get("name").(string)
-	metadataPool := d.Get("metadata_pool").(string)
-	dataPools := d.Get("data_pools").(*schema.Set).List()
 
+	conn, err := r.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
+
+	var dataPools []string
+	resp.Diagnostics.Append(plan.DataPools.ElementsAs(ctx, &dataPools, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(dataPools) == 0 {
+		resp.Diagnostics.AddError("data_pools must contain at least one pool", "")
+		return
+	}
+
+	name := plan.Name.ValueString()
 	command, err := json.Marshal(map[string]interface{}{
 		"prefix":   "fs new",
 		"fs_name":  name,
-		"metadata": metadataPool,
-		"data":     dataPools[0].(string),
+		"metadata": plan.MetadataPool.ValueString(),
+		"data":     dataPools[0],
 		"format":   "json",
 	})
 	if err != nil {
-		return diag.Errorf("Error resource_fs unable to create fs new JSON command: %s", err)
+		resp.Diagnostics.AddError("Error building fs new command", err.Error())
+		return
 	}
 	if _, _, err = conn.MonCommand(command); err != nil {
-		return diag.Errorf("Error resource_fs on fs new command: %s", err)
+		resp.Diagnostics.AddError("Error on fs new command", err.Error())
+		return
 	}
-
-	d.SetId(name)
 
 	for _, pool := range dataPools[1:] {
-		if err := fsAddDataPool(conn, name, pool.(string)); err != nil {
-			return diag.Errorf("Error resource_fs adding data pool %q: %s", pool.(string), err)
+		if err := fsAddDataPool(conn, name, pool); err != nil {
+			resp.Diagnostics.AddError(fmt.Sprintf("Error adding data pool %q", pool), err.Error())
+			return
 		}
 	}
 
-	return resourceFSRead(ctx, d, meta)
+	model, found, diags := r.fetchFromCeph(ctx, name)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.Diagnostics.AddError("Filesystem not found after create", name)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
 
-func resourceFSRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (r *fsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state fsModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
-	fs, err := fsGet(conn, d.Id())
-	if err != nil {
-		return diag.Errorf("Error resource_fs reading filesystem %q: %s", d.Id(), err)
+	model, found, diags := r.fetchFromCeph(ctx, state.Name.ValueString())
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	if fs == nil {
-		d.SetId("")
-		return nil
+	if !found {
+		resp.State.RemoveResource(ctx)
+		return
 	}
-
-	if err := d.Set("name", fs.Name); err != nil {
-		return diag.Errorf("Unable to set name: %s", err)
-	}
-	if err := d.Set("metadata_pool", fs.MetadataPool); err != nil {
-		return diag.Errorf("Unable to set metadata_pool: %s", err)
-	}
-	if err := d.Set("data_pools", fs.DataPools); err != nil {
-		return diag.Errorf("Unable to set data_pools: %s", err)
-	}
-
-	return nil
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
 
-func resourceFSUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (r *fsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state fsModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	name := d.Get("name").(string)
 
-	if d.HasChange("data_pools") {
-		old, new := d.GetChange("data_pools")
-		toAdd := new.(*schema.Set).Difference(old.(*schema.Set))
-		toRemove := old.(*schema.Set).Difference(new.(*schema.Set))
+	conn, err := r.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
 
-		for _, pool := range toAdd.List() {
-			if err := fsAddDataPool(conn, name, pool.(string)); err != nil {
-				return diag.Errorf("Error resource_fs adding data pool %q: %s", pool.(string), err)
+	name := plan.Name.ValueString()
+
+	if !plan.DataPools.Equal(state.DataPools) {
+		var planPools, statePools []string
+		resp.Diagnostics.Append(plan.DataPools.ElementsAs(ctx, &planPools, false)...)
+		resp.Diagnostics.Append(state.DataPools.ElementsAs(ctx, &statePools, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		toAdd, toRemove := sliceDiff(statePools, planPools)
+
+		for _, pool := range toAdd {
+			if err := fsAddDataPool(conn, name, pool); err != nil {
+				resp.Diagnostics.AddError(fmt.Sprintf("Error adding data pool %q", pool), err.Error())
+				return
 			}
 		}
-		for _, pool := range toRemove.List() {
-			if err := fsRemoveDataPool(conn, name, pool.(string)); err != nil {
-				return diag.Errorf("Error resource_fs removing data pool %q: %s", pool.(string), err)
+		for _, pool := range toRemove {
+			if err := fsRemoveDataPool(conn, name, pool); err != nil {
+				resp.Diagnostics.AddError(fmt.Sprintf("Error removing data pool %q", pool), err.Error())
+				return
 			}
 		}
 	}
 
-	return resourceFSRead(ctx, d, meta)
+	model, found, diags := r.fetchFromCeph(ctx, name)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.Diagnostics.AddError("Filesystem not found after update", name)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
 
-func resourceFSDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (r *fsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state fsModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	name := d.Get("name").(string)
+
+	conn, err := r.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
+
+	name := state.Name.ValueString()
 
 	failCmd, err := json.Marshal(map[string]interface{}{
 		"prefix":  "fs fail",
@@ -202,10 +309,12 @@ func resourceFSDelete(ctx context.Context, d *schema.ResourceData, meta interfac
 		"format":  "json",
 	})
 	if err != nil {
-		return diag.Errorf("Error resource_fs unable to create fs fail JSON command: %s", err)
+		resp.Diagnostics.AddError("Error building fs fail command", err.Error())
+		return
 	}
 	if _, _, err = conn.MonCommand(failCmd); err != nil {
-		return diag.Errorf("Error resource_fs on fs fail command: %s", err)
+		resp.Diagnostics.AddError("Error on fs fail command", err.Error())
+		return
 	}
 
 	rmCmd, err := json.Marshal(map[string]interface{}{
@@ -215,11 +324,15 @@ func resourceFSDelete(ctx context.Context, d *schema.ResourceData, meta interfac
 		"format":               "json",
 	})
 	if err != nil {
-		return diag.Errorf("Error resource_fs unable to create fs rm JSON command: %s", err)
+		resp.Diagnostics.AddError("Error building fs rm command", err.Error())
+		return
 	}
 	if _, _, err = conn.MonCommand(rmCmd); err != nil {
-		return diag.Errorf("Error resource_fs on fs rm command: %s", err)
+		resp.Diagnostics.AddError("Error on fs rm command", err.Error())
+		return
 	}
+}
 
-	return nil
+func (r *fsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }

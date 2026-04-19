@@ -4,41 +4,52 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func dataSourceAuth() *schema.Resource {
-	return &schema.Resource{
-		Description: "This data source allows you to get information about a ceph client.",
-		ReadContext: dataSourceAuthRead,
+var _ datasource.DataSource = &authDataSource{}
+var _ datasource.DataSourceWithConfigure = &authDataSource{}
 
-		Schema: map[string]*schema.Schema{
-			"entity": {
-				Type:        schema.TypeString,
+type authDataSource struct {
+	config *Config
+}
+
+func newAuthDataSource() datasource.DataSource {
+	return &authDataSource{}
+}
+
+func (d *authDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_auth"
+}
+
+func (d *authDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	d.config = req.ProviderData.(*Config)
+}
+
+func (d *authDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "This data source allows you to get information about a ceph client.",
+		Attributes: map[string]schema.Attribute{
+			"entity": schema.StringAttribute{
 				Required:    true,
-				ForceNew:    true,
 				Description: "The entity name (i.e.: client.admin)",
 			},
-
-			"caps": {
-				Type: schema.TypeMap,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
+			"caps": schema.MapAttribute{
+				ElementType: types.StringType,
 				Computed:    true,
 				Description: "The caps of the entity",
 			},
-
-			"keyring": {
-				Type:        schema.TypeString,
+			"keyring": schema.StringAttribute{
 				Computed:    true,
 				Sensitive:   true,
 				Description: "The cephx keyring of the entity",
 			},
-
-			"key": {
-				Type:        schema.TypeString,
+			"key": schema.StringAttribute{
 				Computed:    true,
 				Sensitive:   true,
 				Description: "The cephx key of the entity",
@@ -47,33 +58,51 @@ func dataSourceAuth() *schema.Resource {
 	}
 }
 
-func dataSourceAuthRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (d *authDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config authDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	entity := d.Get("entity").(string)
+
+	conn, err := d.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
 
 	command, err := json.Marshal(map[string]interface{}{
 		"prefix": "auth get",
 		"format": "json",
-		"entity": entity,
+		"entity": config.Entity.ValueString(),
 	})
 	if err != nil {
-		return diag.Errorf("Error data_source_auth unable to create get JSON command: %s", err)
+		resp.Diagnostics.AddError("Error building auth get command", err.Error())
+		return
 	}
 
 	buf, _, err := conn.MonCommand(command)
 	if err != nil {
-		return diag.Errorf("Error data_source_auth on get command: %s", err)
+		resp.Diagnostics.AddError("Error on auth get command", err.Error())
+		return
 	}
 
 	var authResponses []authResponse
-	err = json.Unmarshal(buf, &authResponses)
-	if err != nil {
-		return diag.Errorf("Error data_source auth unmarshal on response: %s", err)
+	if err = json.Unmarshal(buf, &authResponses); err != nil {
+		resp.Diagnostics.AddError("Error unmarshaling auth response", err.Error())
+		return
 	}
 
-	d.SetId(entity)
-	return setAuthResourceData(d, authResponses)
+	fullModel, diags := authModelFromResponse(ctx, authResponses)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, authDataSourceModel{
+		Entity:  fullModel.Entity,
+		Caps:    fullModel.Caps,
+		Key:     fullModel.Key,
+		Keyring: fullModel.Keyring,
+	})...)
 }

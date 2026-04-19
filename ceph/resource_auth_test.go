@@ -9,12 +9,12 @@ import (
 func TestToCapsArray(t *testing.T) {
 	tests := []struct {
 		name    string
-		caps    map[string]interface{}
+		caps    map[string]string
 		wantLen int
 	}{
 		{
 			name:    "empty",
-			caps:    map[string]interface{}{},
+			caps:    map[string]string{},
 			wantLen: 0,
 		},
 		{
@@ -24,14 +24,14 @@ func TestToCapsArray(t *testing.T) {
 		},
 		{
 			name: "single cap",
-			caps: map[string]interface{}{
+			caps: map[string]string{
 				"mon": "allow *",
 			},
 			wantLen: 2,
 		},
 		{
 			name: "multiple caps",
-			caps: map[string]interface{}{
+			caps: map[string]string{
 				"mon": "allow *",
 				"osd": "allow rw",
 				"mds": "allow rw",
@@ -48,8 +48,6 @@ func TestToCapsArray(t *testing.T) {
 				t.Fatalf("len = %d, want %d", len(result), tt.wantLen)
 			}
 
-			// Verify that every key-value pair in the output matches the input map.
-			// Elements come in [key, value, key, value, ...] order.
 			for i := 0; i < len(result); i += 2 {
 				key := result[i]
 				val := result[i+1]
@@ -58,7 +56,7 @@ func TestToCapsArray(t *testing.T) {
 					t.Errorf("unexpected key %q in output", key)
 					continue
 				}
-				if val != want.(string) {
+				if val != want {
 					t.Errorf("caps[%q] = %q, want %q", key, val, want)
 				}
 			}

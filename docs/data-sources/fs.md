@@ -32,5 +32,4 @@ output "cephfs_metadata_pool" {
 ### Read-Only
 
 - `data_pools` (Set of String) Data pools attached to the filesystem.
-- `id` (String) The ID of this resource.
 - `metadata_pool` (String) Pool used for filesystem metadata.

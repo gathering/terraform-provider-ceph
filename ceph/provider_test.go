@@ -1,43 +1,37 @@
 package ceph
 
 import (
+	"context"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/provider"
 )
 
-// TestProviderSchema validates that the provider schema is internally consistent.
-// This catches typos in schema definitions, missing required fields, and invalid
-// attribute combinations without needing a live Ceph cluster.
 func TestProviderSchema(t *testing.T) {
-	p := Provider()
-	if err := p.InternalValidate(); err != nil {
-		t.Fatalf("provider schema validation failed: %v", err)
+	ctx := context.Background()
+	p := New()()
+
+	var schemaResp provider.SchemaResponse
+	p.Schema(ctx, provider.SchemaRequest{}, &schemaResp)
+	if schemaResp.Diagnostics.HasError() {
+		t.Fatalf("provider schema has errors: %v", schemaResp.Diagnostics)
+	}
+
+	for _, attr := range []string{"config_path", "entity", "cluster", "keyring", "key", "mon_host"} {
+		if _, ok := schemaResp.Schema.Attributes[attr]; !ok {
+			t.Errorf("provider schema missing attribute %q", attr)
+		}
 	}
 }
 
-// TestProviderResources checks that all expected resources and data sources are registered.
 func TestProviderResources(t *testing.T) {
-	p := Provider()
+	ctx := context.Background()
+	p := New()()
 
-	resources := []string{
-		"ceph_auth",
-		"ceph_osd_pool",
-		"ceph_wait_online",
-		"ceph_fs",
+	if got := len(p.Resources(ctx)); got != 4 {
+		t.Errorf("expected 4 resources, got %d", got)
 	}
-	for _, name := range resources {
-		if _, ok := p.ResourcesMap[name]; !ok {
-			t.Errorf("provider is missing resource %q", name)
-		}
-	}
-
-	dataSources := []string{
-		"ceph_auth",
-		"ceph_osd_pool",
-		"ceph_fs",
-	}
-	for _, name := range dataSources {
-		if _, ok := p.DataSourcesMap[name]; !ok {
-			t.Errorf("provider is missing data source %q", name)
-		}
+	if got := len(p.DataSources(ctx)); got != 3 {
+		t.Errorf("expected 3 data sources, got %d", got)
 	}
 }

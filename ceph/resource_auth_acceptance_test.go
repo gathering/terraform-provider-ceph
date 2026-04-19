@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccAuth_basic(t *testing.T) {
@@ -16,9 +16,9 @@ func TestAccAuth_basic(t *testing.T) {
 	resourceName := "ceph_auth.test"
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:          func() { testAccPreCheck(t) },
-		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckAuthDestroyed(entity),
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProviderFactories,
+		CheckDestroy:             testAccCheckAuthDestroyed(entity),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccAuthConfig(entity, `mon = "allow r"`),
@@ -74,7 +74,6 @@ func testAccCheckAuthDestroyed(entity string) func(*terraform.State) error {
 		}
 		buf, _, err := conn.MonCommand(command)
 		if err != nil {
-			// ENOENT means it's gone
 			return nil
 		}
 		var responses []authResponse

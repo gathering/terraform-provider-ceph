@@ -7,10 +7,105 @@ import (
 	"strings"
 
 	"github.com/ceph/go-ceph/rbd"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
+
+var _ resource.Resource = &osdPoolResource{}
+var _ resource.ResourceWithImportState = &osdPoolResource{}
+var _ resource.ResourceWithConfigure = &osdPoolResource{}
+
+type osdPoolResource struct {
+	config *Config
+}
+
+func newOSDPoolResource() resource.Resource {
+	return &osdPoolResource{}
+}
+
+func (r *osdPoolResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_osd_pool"
+}
+
+func (r *osdPoolResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	r.config = req.ProviderData.(*Config)
+}
+
+func (r *osdPoolResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "Manages a Ceph OSD pool. Pool deletion requires mon_allow_pool_delete = true in the Ceph configuration.",
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				Computed:    true,
+				Description: "The pool name, used as the resource identifier.",
+			},
+			"name": schema.StringAttribute{
+				Required:    true,
+				Description: "The name of the pool.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"type": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "The pool type: replicated. Defaults to replicated. Currently only replicated pools are supported.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("replicated"),
+				},
+			},
+			"pg_num": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Number of placement groups. Uses the cluster default when not set.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+			},
+			"size": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Replication factor (replicated pools only). Uses the cluster default when not set.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+			},
+			"min_size": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Minimum number of replicas required for I/O (replicated pools only). Uses the cluster default when not set.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+			},
+			"crush_rule": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "CRUSH rule name for the pool. Uses the cluster default when not set.",
+			},
+			"application": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Computed:    true,
+				Description: "Application tags enabled on the pool (e.g. rbd, cephfs, rgw). When rbd is included the pool is also initialized with rbd pool init.",
+			},
+		},
+	}
+}
 
 type poolGetAllResponse struct {
 	Pool      string `json:"pool"`
@@ -116,9 +211,8 @@ func osdPoolApplicationGet(conn monCommander, pool string) ([]string, error) {
 }
 
 // rbdPoolInit prepares a pool to host RBD images, equivalent to `rbd pool init`.
-// It uses meta to obtain a connection so the caller does not need to import rados.
-func rbdPoolInit(meta interface{}, poolName string) error {
-	conn, err := meta.(*Config).GetCephConnection()
+func rbdPoolInit(config *Config, poolName string) error {
+	conn, err := config.GetCephConnection()
 	if err != nil {
 		return err
 	}
@@ -131,235 +225,256 @@ func rbdPoolInit(meta interface{}, poolName string) error {
 	return initErr
 }
 
-func resourceOSDPool() *schema.Resource {
-	return &schema.Resource{
-		Description:   "Manages a Ceph OSD pool. Pool deletion requires mon_allow_pool_delete = true in the Ceph configuration.",
-		CreateContext: resourceOSDPoolCreate,
-		ReadContext:   resourceOSDPoolRead,
-		UpdateContext: resourceOSDPoolUpdate,
-		DeleteContext: resourceOSDPoolDelete,
-		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
-		},
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
-				Required:    true,
-				ForceNew:    true,
-				Description: "The name of the pool.",
-			},
-			"type": {
-				Type:             schema.TypeString,
-				Optional:         true,
-				ForceNew:         true,
-				Default:          "replicated",
-				ValidateDiagFunc: validation.ToDiagFunc(validation.StringInSlice([]string{"replicated"}, false)),
-				Description:      "The pool type: replicated. Defaults to replicated. Currently only replicated pools are supported.",
-			},
-			"pg_num": {
-				Type:             schema.TypeInt,
-				Optional:         true,
-				Computed:         true,
-				ValidateDiagFunc: validation.ToDiagFunc(validation.IntAtLeast(1)),
-				Description:      "Number of placement groups. Uses the cluster default when not set.",
-			},
-			"size": {
-				Type:             schema.TypeInt,
-				Optional:         true,
-				Computed:         true,
-				ValidateDiagFunc: validation.ToDiagFunc(validation.IntAtLeast(1)),
-				Description:      "Replication factor (replicated pools only). Uses the cluster default when not set.",
-			},
-			"min_size": {
-				Type:             schema.TypeInt,
-				Optional:         true,
-				Computed:         true,
-				ValidateDiagFunc: validation.ToDiagFunc(validation.IntAtLeast(1)),
-				Description:      "Minimum number of replicas required for I/O (replicated pools only). Uses the cluster default when not set.",
-			},
-			"crush_rule": {
-				Type:        schema.TypeString,
-				Optional:    true,
-				Computed:    true,
-				Description: "CRUSH rule name for the pool. Uses the cluster default when not set.",
-			},
-			"application": {
-				Type:     schema.TypeSet,
-				Optional: true,
-				Computed: true,
-				Elem:     &schema.Schema{Type: schema.TypeString},
-				Description: "Application tags enabled on the pool (e.g. rbd, cephfs, rgw). " +
-					"When rbd is included the pool is also initialized with rbd pool init.",
-			},
-		},
-	}
-}
+func (r *osdPoolResource) fetchFromCeph(ctx context.Context, name string) (osdPoolModel, bool, diag.Diagnostics) {
+	var diags diag.Diagnostics
 
-func resourceOSDPoolCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
+	conn, err := r.config.GetCephConnection()
 	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+		diags.AddError("Unable to connect to Ceph", err.Error())
+		return osdPoolModel{}, false, diags
 	}
-	name := d.Get("name").(string)
-
-	createCmd := map[string]interface{}{
-		"prefix":    "osd pool create",
-		"pool":      name,
-		"pool_type": d.Get("type").(string),
-		"format":    "json",
-	}
-	if v, ok := d.GetOk("pg_num"); ok {
-		createCmd["pg_num"] = v.(int)
-	}
-
-	command, err := json.Marshal(createCmd)
-	if err != nil {
-		return diag.Errorf("Error resource_osd_pool unable to create pool creation JSON command: %s", err)
-	}
-	if _, _, err = conn.MonCommand(command); err != nil {
-		return diag.Errorf("Error resource_osd_pool on pool create command: %s", err)
-	}
-
-	d.SetId(name)
-
-	if v, ok := d.GetOk("size"); ok {
-		if err := osdPoolSet(conn, name, "size", fmt.Sprintf("%d", v.(int))); err != nil {
-			return diag.Errorf("Error resource_osd_pool setting size: %s", err)
-		}
-	}
-	if v, ok := d.GetOk("min_size"); ok {
-		if err := osdPoolSet(conn, name, "min_size", fmt.Sprintf("%d", v.(int))); err != nil {
-			return diag.Errorf("Error resource_osd_pool setting min_size: %s", err)
-		}
-	}
-	if v, ok := d.GetOk("crush_rule"); ok {
-		if err := osdPoolSet(conn, name, "crush_rule", v.(string)); err != nil {
-			return diag.Errorf("Error resource_osd_pool setting crush_rule: %s", err)
-		}
-	}
-
-	for _, app := range d.Get("application").(*schema.Set).List() {
-		appName := app.(string)
-		if err := osdPoolApplicationEnable(conn, name, appName); err != nil {
-			return diag.Errorf("Error resource_osd_pool enabling application %q: %s", appName, err)
-		}
-		if appName == "rbd" {
-			if err := rbdPoolInit(meta, name); err != nil {
-				return diag.Errorf("Error resource_osd_pool on rbd pool init: %s", err)
-			}
-		}
-	}
-
-	return resourceOSDPoolRead(ctx, d, meta)
-}
-
-func resourceOSDPoolRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
-	}
-	name := d.Id()
 
 	pool, status, err := osdPoolGetAll(conn, name)
 	if err != nil {
 		if strings.Contains(status, "ENOENT") {
-			d.SetId("")
-			return nil
+			return osdPoolModel{}, false, diags
 		}
-		return diag.Errorf("Error resource_osd_pool reading pool %q: %s", name, err)
-	}
-
-	if err := d.Set("name", pool.Pool); err != nil {
-		return diag.Errorf("Unable to set name: %s", err)
-	}
-	if err := d.Set("pg_num", pool.PgNum); err != nil {
-		return diag.Errorf("Unable to set pg_num: %s", err)
-	}
-	if err := d.Set("size", pool.Size); err != nil {
-		return diag.Errorf("Unable to set size: %s", err)
-	}
-	if err := d.Set("min_size", pool.MinSize); err != nil {
-		return diag.Errorf("Unable to set min_size: %s", err)
-	}
-	if err := d.Set("crush_rule", pool.CrushRule); err != nil {
-		return diag.Errorf("Unable to set crush_rule: %s", err)
-	}
-	if err := d.Set("type", "replicated"); err != nil {
-		return diag.Errorf("Unable to set type: %s", err)
+		diags.AddError(fmt.Sprintf("Error reading pool %q", name), err.Error())
+		return osdPoolModel{}, false, diags
 	}
 
 	apps, err := osdPoolApplicationGet(conn, name)
 	if err != nil {
-		return diag.Errorf("Error resource_osd_pool reading applications for pool %q: %s", name, err)
-	}
-	if err := d.Set("application", apps); err != nil {
-		return diag.Errorf("Unable to set application: %s", err)
+		diags.AddError(fmt.Sprintf("Error reading applications for pool %q", name), err.Error())
+		return osdPoolModel{}, false, diags
 	}
 
-	return nil
+	appList, d := types.ListValueFrom(ctx, types.StringType, apps)
+	diags.Append(d...)
+	if diags.HasError() {
+		return osdPoolModel{}, false, diags
+	}
+
+	model := osdPoolModel{
+		ID:          types.StringValue(pool.Pool),
+		Name:        types.StringValue(pool.Pool),
+		Type:        types.StringValue("replicated"),
+		PgNum:       types.Int64Value(int64(pool.PgNum)),
+		Size:        types.Int64Value(int64(pool.Size)),
+		MinSize:     types.Int64Value(int64(pool.MinSize)),
+		CrushRule:   types.StringValue(pool.CrushRule),
+		Application: appList,
+	}
+	return model, true, diags
 }
 
-func resourceOSDPoolUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
+func (r *osdPoolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan osdPoolModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	conn, err := r.config.GetCephConnection()
 	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
-	}
-	name := d.Get("name").(string)
-
-	if d.HasChange("pg_num") {
-		if err := osdPoolSet(conn, name, "pg_num", fmt.Sprintf("%d", d.Get("pg_num").(int))); err != nil {
-			return diag.Errorf("Error resource_osd_pool updating pg_num: %s", err)
-		}
-	}
-	if d.HasChange("size") {
-		if err := osdPoolSet(conn, name, "size", fmt.Sprintf("%d", d.Get("size").(int))); err != nil {
-			return diag.Errorf("Error resource_osd_pool updating size: %s", err)
-		}
-	}
-	if d.HasChange("min_size") {
-		if err := osdPoolSet(conn, name, "min_size", fmt.Sprintf("%d", d.Get("min_size").(int))); err != nil {
-			return diag.Errorf("Error resource_osd_pool updating min_size: %s", err)
-		}
-	}
-	if d.HasChange("crush_rule") {
-		if err := osdPoolSet(conn, name, "crush_rule", d.Get("crush_rule").(string)); err != nil {
-			return diag.Errorf("Error resource_osd_pool updating crush_rule: %s", err)
-		}
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
 	}
 
-	if d.HasChange("application") {
-		old, new := d.GetChange("application")
-		toRemove := old.(*schema.Set).Difference(new.(*schema.Set))
-		toAdd := new.(*schema.Set).Difference(old.(*schema.Set))
+	poolType := "replicated"
+	if !plan.Type.IsNull() && !plan.Type.IsUnknown() {
+		poolType = plan.Type.ValueString()
+	}
 
-		for _, app := range toRemove.List() {
-			if err := osdPoolApplicationDisable(conn, name, app.(string)); err != nil {
-				return diag.Errorf("Error resource_osd_pool disabling application %q: %s", app.(string), err)
+	createCmd := map[string]interface{}{
+		"prefix":    "osd pool create",
+		"pool":      plan.Name.ValueString(),
+		"pool_type": poolType,
+		"format":    "json",
+	}
+	if !plan.PgNum.IsNull() && !plan.PgNum.IsUnknown() {
+		createCmd["pg_num"] = plan.PgNum.ValueInt64()
+	}
+
+	command, err := json.Marshal(createCmd)
+	if err != nil {
+		resp.Diagnostics.AddError("Error building pool create command", err.Error())
+		return
+	}
+	if _, _, err = conn.MonCommand(command); err != nil {
+		resp.Diagnostics.AddError("Error on pool create command", err.Error())
+		return
+	}
+
+	name := plan.Name.ValueString()
+
+	if !plan.Size.IsNull() && !plan.Size.IsUnknown() {
+		if err := osdPoolSet(conn, name, "size", fmt.Sprintf("%d", plan.Size.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Error setting size", err.Error())
+			return
+		}
+	}
+	if !plan.MinSize.IsNull() && !plan.MinSize.IsUnknown() {
+		if err := osdPoolSet(conn, name, "min_size", fmt.Sprintf("%d", plan.MinSize.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Error setting min_size", err.Error())
+			return
+		}
+	}
+	if !plan.CrushRule.IsNull() && !plan.CrushRule.IsUnknown() {
+		if err := osdPoolSet(conn, name, "crush_rule", plan.CrushRule.ValueString()); err != nil {
+			resp.Diagnostics.AddError("Error setting crush_rule", err.Error())
+			return
+		}
+	}
+
+	var apps []string
+	if !plan.Application.IsNull() && !plan.Application.IsUnknown() {
+		resp.Diagnostics.Append(plan.Application.ElementsAs(ctx, &apps, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	for _, app := range apps {
+		if err := osdPoolApplicationEnable(conn, name, app); err != nil {
+			resp.Diagnostics.AddError(fmt.Sprintf("Error enabling application %q", app), err.Error())
+			return
+		}
+		if app == "rbd" {
+			if err := rbdPoolInit(r.config, name); err != nil {
+				resp.Diagnostics.AddWarning("rbd pool init failed",
+					fmt.Sprintf("Could not initialize pool %q for RBD: %s. Manual initialization may be required.", name, err))
 			}
 		}
-		for _, app := range toAdd.List() {
-			appName := app.(string)
-			if err := osdPoolApplicationEnable(conn, name, appName); err != nil {
-				return diag.Errorf("Error resource_osd_pool enabling application %q: %s", appName, err)
+	}
+
+	model, found, diags := r.fetchFromCeph(ctx, name)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.Diagnostics.AddError("Pool not found after create", name)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
+}
+
+func (r *osdPoolResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state osdPoolModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	model, found, diags := r.fetchFromCeph(ctx, state.Name.ValueString())
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
+}
+
+func (r *osdPoolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state osdPoolModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	conn, err := r.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
+
+	name := plan.Name.ValueString()
+
+	if !plan.PgNum.Equal(state.PgNum) {
+		if err := osdPoolSet(conn, name, "pg_num", fmt.Sprintf("%d", plan.PgNum.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Error updating pg_num", err.Error())
+			return
+		}
+	}
+	if !plan.Size.Equal(state.Size) {
+		if err := osdPoolSet(conn, name, "size", fmt.Sprintf("%d", plan.Size.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Error updating size", err.Error())
+			return
+		}
+	}
+	if !plan.MinSize.Equal(state.MinSize) {
+		if err := osdPoolSet(conn, name, "min_size", fmt.Sprintf("%d", plan.MinSize.ValueInt64())); err != nil {
+			resp.Diagnostics.AddError("Error updating min_size", err.Error())
+			return
+		}
+	}
+	if !plan.CrushRule.Equal(state.CrushRule) {
+		if err := osdPoolSet(conn, name, "crush_rule", plan.CrushRule.ValueString()); err != nil {
+			resp.Diagnostics.AddError("Error updating crush_rule", err.Error())
+			return
+		}
+	}
+
+	if !plan.Application.Equal(state.Application) {
+		var planApps, stateApps []string
+		resp.Diagnostics.Append(plan.Application.ElementsAs(ctx, &planApps, false)...)
+		resp.Diagnostics.Append(state.Application.ElementsAs(ctx, &stateApps, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		toAdd, toRemove := sliceDiff(stateApps, planApps)
+
+		for _, app := range toRemove {
+			if err := osdPoolApplicationDisable(conn, name, app); err != nil {
+				resp.Diagnostics.AddError(fmt.Sprintf("Error disabling application %q", app), err.Error())
+				return
 			}
-			if appName == "rbd" {
-				if err := rbdPoolInit(meta, name); err != nil {
-					return diag.Errorf("Error resource_osd_pool on rbd pool init: %s", err)
+		}
+		for _, app := range toAdd {
+			if err := osdPoolApplicationEnable(conn, name, app); err != nil {
+				resp.Diagnostics.AddError(fmt.Sprintf("Error enabling application %q", app), err.Error())
+				return
+			}
+			if app == "rbd" {
+				if err := rbdPoolInit(r.config, name); err != nil {
+					resp.Diagnostics.AddWarning("rbd pool init failed",
+						fmt.Sprintf("Could not initialize pool %q for RBD: %s. Manual initialization may be required.", name, err))
 				}
 			}
 		}
 	}
 
-	return resourceOSDPoolRead(ctx, d, meta)
+	model, found, diags := r.fetchFromCeph(ctx, name)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !found {
+		resp.Diagnostics.AddError("Pool not found after update", name)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }
 
-func resourceOSDPoolDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (r *osdPoolResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state osdPoolModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	name := d.Get("name").(string)
 
+	conn, err := r.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
+
+	name := state.Name.ValueString()
 	command, err := json.Marshal(map[string]interface{}{
 		"prefix":                      "osd pool delete",
 		"pool":                        name,
@@ -368,11 +483,15 @@ func resourceOSDPoolDelete(ctx context.Context, d *schema.ResourceData, meta int
 		"format":                      "json",
 	})
 	if err != nil {
-		return diag.Errorf("Error resource_osd_pool unable to create delete JSON command: %s", err)
+		resp.Diagnostics.AddError("Error building pool delete command", err.Error())
+		return
 	}
 	if _, _, err = conn.MonCommand(command); err != nil {
-		return diag.Errorf("Error resource_osd_pool on pool delete command: %s", err)
+		resp.Diagnostics.AddError("Error on pool delete command", err.Error())
+		return
 	}
+}
 
-	return nil
+func (r *osdPoolResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("name"), req, resp)
 }

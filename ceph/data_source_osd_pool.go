@@ -2,90 +2,112 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func dataSourceOSDPool() *schema.Resource {
-	return &schema.Resource{
-		Description: "This data source allows you to get information about an existing Ceph OSD pool.",
-		ReadContext: dataSourceOSDPoolRead,
+var _ datasource.DataSource = &osdPoolDataSource{}
+var _ datasource.DataSourceWithConfigure = &osdPoolDataSource{}
 
-		Schema: map[string]*schema.Schema{
-			"name": {
-				Type:        schema.TypeString,
+type osdPoolDataSource struct {
+	config *Config
+}
+
+func newOSDPoolDataSource() datasource.DataSource {
+	return &osdPoolDataSource{}
+}
+
+func (d *osdPoolDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_osd_pool"
+}
+
+func (d *osdPoolDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	d.config = req.ProviderData.(*Config)
+}
+
+func (d *osdPoolDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		Description: "This data source allows you to get information about an existing Ceph OSD pool.",
+		Attributes: map[string]schema.Attribute{
+			"name": schema.StringAttribute{
 				Required:    true,
 				Description: "The name of the pool.",
 			},
-			"pg_num": {
-				Type:        schema.TypeInt,
+			"pg_num": schema.Int64Attribute{
 				Computed:    true,
 				Description: "Number of placement groups.",
 			},
-			"size": {
-				Type:        schema.TypeInt,
+			"size": schema.Int64Attribute{
 				Computed:    true,
 				Description: "Replication factor.",
 			},
-			"min_size": {
-				Type:        schema.TypeInt,
+			"min_size": schema.Int64Attribute{
 				Computed:    true,
 				Description: "Minimum number of replicas required for I/O.",
 			},
-			"crush_rule": {
-				Type:        schema.TypeString,
+			"crush_rule": schema.StringAttribute{
 				Computed:    true,
 				Description: "CRUSH rule name for the pool.",
 			},
-			"application": {
-				Type:        schema.TypeSet,
+			"application": schema.ListAttribute{
+				ElementType: types.StringType,
 				Computed:    true,
-				Elem:        &schema.Schema{Type: schema.TypeString},
 				Description: "Application tags enabled on the pool (e.g. rbd, cephfs, rgw).",
 			},
 		},
 	}
 }
 
-func dataSourceOSDPoolRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
-	conn, err := meta.(*Config).GetCephConnection()
-	if err != nil {
-		return diag.Errorf("Unable to connect to Ceph: %s", err)
+func (d *osdPoolDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var config osdPoolDatasourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	name := d.Get("name").(string)
 
+	conn, err := d.config.GetCephConnection()
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to connect to Ceph", err.Error())
+		return
+	}
+
+	name := config.Name.ValueString()
 	pool, status, err := osdPoolGetAll(conn, name)
 	if err != nil {
 		if strings.Contains(status, "ENOENT") {
-			return diag.Errorf("Pool %q not found", name)
+			resp.Diagnostics.AddError("Pool not found", fmt.Sprintf("Pool %q does not exist", name))
+			return
 		}
-		return diag.Errorf("Error data_source_osd_pool reading pool %q: %s", name, err)
-	}
-
-	d.SetId(name)
-
-	if err := d.Set("pg_num", pool.PgNum); err != nil {
-		return diag.Errorf("Unable to set pg_num: %s", err)
-	}
-	if err := d.Set("size", pool.Size); err != nil {
-		return diag.Errorf("Unable to set size: %s", err)
-	}
-	if err := d.Set("min_size", pool.MinSize); err != nil {
-		return diag.Errorf("Unable to set min_size: %s", err)
-	}
-	if err := d.Set("crush_rule", pool.CrushRule); err != nil {
-		return diag.Errorf("Unable to set crush_rule: %s", err)
+		resp.Diagnostics.AddError(fmt.Sprintf("Error reading pool %q", name), err.Error())
+		return
 	}
 
 	apps, err := osdPoolApplicationGet(conn, name)
 	if err != nil {
-		return diag.Errorf("Error data_source_osd_pool reading applications for pool %q: %s", name, err)
-	}
-	if err := d.Set("application", apps); err != nil {
-		return diag.Errorf("Unable to set application: %s", err)
+		resp.Diagnostics.AddError(fmt.Sprintf("Error reading applications for pool %q", name), err.Error())
+		return
 	}
 
-	return nil
+	appList, diags := types.ListValueFrom(ctx, types.StringType, apps)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	model := osdPoolDatasourceModel{
+		Name:        types.StringValue(pool.Pool),
+		PgNum:       types.Int64Value(int64(pool.PgNum)),
+		Size:        types.Int64Value(int64(pool.Size)),
+		MinSize:     types.Int64Value(int64(pool.MinSize)),
+		CrushRule:   types.StringValue(pool.CrushRule),
+		Application: appList,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, model)...)
 }

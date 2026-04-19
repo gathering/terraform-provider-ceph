@@ -41,6 +41,6 @@ output "myapp_key" {
 
 ### Read-Only
 
-- `id` (String) The ID of this resource.
+- `id` (String) The entity name, used as the resource identifier.
 - `key` (String, Sensitive) The cephx key of the entity
 - `keyring` (String, Sensitive) The cephx keyring of the entity
