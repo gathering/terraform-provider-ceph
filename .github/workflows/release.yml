@@ -43,5 +43,3 @@ jobs:
           # GitHub sets the GITHUB_TOKEN secret automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
-          # arm64 cross-compilation via gcc-aarch64-linux-gnu
-          CC_linux_arm64: aarch64-linux-gnu-gcc
