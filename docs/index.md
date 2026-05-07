@@ -46,9 +46,9 @@ Explicit provider arguments take precedence over environment variables.
 
 ### Optional
 
-- `cluster` (String) The name of the Ceph cluster to use. Can also be set via the `CEPH_CLUSTER` environment variable.
-- `config_path` (String) Path to the ceph config. Can also be set via the `CEPH_CONF` environment variable.
-- `entity` (String) The cephx entity to use to connect to Ceph (i.e.: client.admin). Can also be set via the `CEPH_ENTITY` environment variable.
-- `key` (String, Sensitive) The actual key (not a path to a file) to use to connect to Ceph. Can also be set via the `CEPH_KEY` environment variable.
-- `keyring` (String, Sensitive) The actual keyring (not a path to a file) to use to connect to Ceph. Can also be set via the `CEPH_KEYRING` environment variable.
-- `mon_host` (String) Monitor address(es) to connect to. Can also be set via the `CEPH_MON_HOST` environment variable.
+- `cluster` (String) The name of the Ceph cluster to use. Can also be set via the CEPH_CLUSTER environment variable.
+- `config_path` (String) Path to the ceph config. Can also be set via the CEPH_CONF environment variable.
+- `entity` (String) The cephx entity to use to connect to Ceph (i.e.: client.admin). Can also be set via the CEPH_ENTITY environment variable.
+- `key` (String, Sensitive) The actual key (not a path to a file) to use to connect to Ceph. Can also be set via the CEPH_KEY environment variable.
+- `keyring` (String, Sensitive) The actual keyring (not a path to a file) to use to connect to Ceph. Can also be set via the CEPH_KEYRING environment variable.
+- `mon_host` (String) Monitor address(es) to connect to. Can also be set via the CEPH_MON_HOST environment variable.
