@@ -48,6 +48,17 @@ provider "ceph" {
 }
 ```
 
+All provider arguments can be set via environment variables. Explicit arguments take precedence.
+
+| Argument | Environment Variable |
+|----------|---------------------|
+| `config_path` | `CEPH_CONF` |
+| `entity` | `CEPH_ENTITY` |
+| `cluster` | `CEPH_CLUSTER` |
+| `keyring` | `CEPH_KEYRING` |
+| `key` | `CEPH_KEY` |
+| `mon_host` | `CEPH_MON_HOST` |
+
 ## Building
 
 With Docker (no local Ceph libraries needed):
